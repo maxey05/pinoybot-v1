@@ -1,67 +1,182 @@
-# Features of the previous word that you already computed for the current one
-# Features of the next word that you already computed for the current one (last two help since adjacent words tend to share labels)
+import re
+import scipy.sparse as sp
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction import DictVectorizer
 
+# capitalize a word and turn it into a number pattern.
+# uppercase letters become X's
+# lowercase letters become x's
+# numbers become d's
+# if there is a continuous run of repeated symbols, this function basically collapses it so that words with the same capitalization pattern can be identified by the model
+def word_shape(word):
+    chars = []
+    for c in word:
+        if c.isupper():
+            chars.append("X")
+        elif c.islower():
+            chars.append("x")
+        elif c.isdigit():
+            chars.append("d")
+        else:
+            chars.append(c)
 
-# just a punctuation (almost always OTH)
-def feature1(word):
-    to_check = [".", "?", "!", ","]
-    if all(ch in to_check for ch in word):
-        return 1
-    return 0
+    s = "".join(chars)
+    result = ""
+    for c in s:
+        if not result.endswith(c * 2):
+            result += c
+    return result
 
-# hypen or apostrophe appearing in a word (mostly FIL)
-def feature2(word):
-    to_check = ["-","'"]
-    if any(ch in word for ch in to_check):
-        return 1
-    return 0
+# because a word's meaning usually depends on where it sits in a sentence, we need a sort of "dictionary" to deduce each word's meaning in the sentence.
+# this is where features comes in
 
-# ratio of capital letters (helps for acronyms and capitalize words)
-def feature3(word):
-    count = 0
+# These features give hints on what the current word may be
+# - feats["is_punct"] if the token has no letters or digits return 1, 0 otherwise
+# - feats["is_single_cap"] if the token has only 1 capital letter return 1, 0 otherwise
+# - feats["cap_not_first"] if the word starts with a capital letter and is NOT the first word in the sentence return 1, otherwise 0
+# - feats["all_caps"] if the word is all caps return 1, 0 otherwise
+# - feats["length"] measures how long a word is, turns the length into a decimal between 0 and 1
+# - feats["shape"] this is based on the word_shaping we did a while ago, basically maps out a word's shape to a specific value (like Xxx = 1)
+# - feats["word"] this is a recording of the actual word itself.
+
+# These features give hints on what the previous word may be
+# - feats["BOS"] if the word is at the start of the sentence return 1, 0 otherwise
+# - feats["prev_words"] tells the model what word came before it (its based on feats["word"])
+# - feats["prev_suffix3="] set to 1 for the last 3 characters of the previous word
+# - feats["prev_is_cap"] if the previous word starts with a capital letter return 1, 0 otherwise
+# - feats["prev_is_punct"] if the previous token is a punctuation return 1, otherwise 0
+
+# These features give hints on what the next word may be
+# - feats["EOS"] if the current token is the very last one in the sentence return 1
+# - feats["next_words"] tells the model what word comes after it
+# - feats["next_suffix3"] set to 1 for the last 3 characters of the next word
+# - feats["next_is_cap"] if the next word starts with a capital letter, otherwise 0
+# - feats["next_is_punct"] if the next token is a punctuation return 1, 0 otherwise
+def token_features(tokens, i):
+    word = tokens[i]
+    feats = {}
+
+    # is_punct
+    if len(word) == 0:
+        feats["is_punct"] = 0
+    else:
+        has_letter_or_digit = False
+        for char in word:
+            if char.isalnum():
+                has_letter_or_digit = True
+                break
+
+        if has_letter_or_digit == False:
+            feats["is_punct"] = 1
+        else:
+            feats["is_punct"] = 0
+
+    # is_single_cap
+    if len(word) == 1 and word.isupper():
+        feats["is_single_cap"] = 1
+    else:
+        feats["is_single_cap"] = 0
+
+    # cap_not_first
+    if len(word) > 0 and word[0].isupper() and i > 0:
+        feats["cap_not_first"] = 1
+    else:
+        feats["cap_not_first"] = 0
+
+    # all_caps
+    has_letter = False
     for char in word:
-        if char.isupper():
-            count += 1
-    return count / len(word)
+        if char.isalpha():
+            has_letter = True
+            break
 
-# sentence postion (helps for diffentiating of proper names and starting words)
-def feature4(index,sentence_words):
-    if sentence_words > 1: 
-        return index / (sentence_words - 1)
-    return 0
+    if has_letter == True and word.isupper():
+        feats["all_caps"] = 1
+    else:
+        feats["all_caps"] = 0
 
-# character 3-gram (helps find patterns between words of languages) FIL
-def feature5(word):
-    three_word = ["ang", "ing", "nag", "pag", "mag"]
-    count = 0
+    # length
+    word_len = len(word)
+    if word_len > 15:
+        capped_len = 15
+    else:
+        capped_len = word_len
+
+    feats["length"] = capped_len / 15.0
+
+    # shape
+    shape_pattern = word_shape(word)
+    feats["shape=" + shape_pattern] = 1
+
+    # word
     lower_word = word.lower()
-    if len(lower_word) >= 3:
-        for i in range(len(lower_word) - 2):
-            gram = lower_word[i : i + 3]
-            if gram in three_word:
-                return 1
-    return 0
+    feats["word=" + lower_word] = 1
 
-# ENG ver
-def feature6(word):
-    three_word = ["ion", "ght", "ent", "the", "and"]
-    count = 0
-    lower_word = word.lower()
-    if len(lower_word) >= 3:
-        for i in range(len(lower_word) - 2):
-            gram = lower_word[i : i + 3]
-            if gram in three_word:
-                return 1
-    return 0
+    # Previous token clues
+    if i > 0:
+        prev_word = tokens[i - 1]
+        prev_lower = prev_word.lower()
 
-def get_features(word,index,sentence_words):
-    f1 = feature1(word)
-    f2 = feature2(word)
-    f3 = feature3(word)
-    f4 = feature4(index,sentence_words)
-    f5 = feature5(word)
-    f6 = feature6(word)
+        feats["prev_word=" + prev_lower] = 1
+        feats["prev_suffix3=" + prev_lower[-3:]] = 1
 
-    features = [f1, f2, f3, f4, f5,f6]
+        if len(prev_word) > 0 and prev_word[0].isupper():
+            feats["prev_is_cap"] = 1
+        else:
+            feats["prev_is_cap"] = 0
 
-    return features
+        if len(prev_word) == 0:
+            feats["prev_is_punct"] = 0
+        else:
+            prev_has_alnum = False
+            for char in prev_word:
+                if char.isalnum():
+                    prev_has_alnum = True
+                    break
+
+            if prev_has_alnum == False:
+                feats["prev_is_punct"] = 1
+            else:
+                feats["prev_is_punct"] = 0
+
+    else:
+        feats["BOS"] = 1
+
+    # Next token clues
+    last_index = len(tokens) - 1
+    if i < last_index:
+        next_word = tokens[i + 1]
+        next_lower = next_word.lower()
+
+        feats["next_word=" + next_lower] = 1
+        feats["next_suffix3=" + next_lower[-3:]] = 1
+
+        if len(next_word) > 0 and next_word[0].isupper():
+            feats["next_is_cap"] = 1
+        else:
+            feats["next_is_cap"] = 0
+
+        if len(next_word) == 0:
+            feats["next_is_punct"] = 0
+        else:
+            next_has_alnum = False
+            for char in next_word:
+                if char.isalnum():
+                    next_has_alnum = True
+                    break
+
+            if next_has_alnum == False:
+                feats["next_is_punct"] = 1
+            else:
+                feats["next_is_punct"] = 0
+
+    else:
+        feats["EOS"] = 1
+
+    return feats
+        
+
+    
+
+
+        
