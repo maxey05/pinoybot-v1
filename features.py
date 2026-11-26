@@ -174,7 +174,42 @@ def token_features(tokens, i):
         feats["EOS"] = 1
 
     return feats
-        
+
+# converts a word into lowercase and wraps them in '^' and '$'
+# ^ means start
+# $ means end
+# These markers let the model tell prefixes apart from suffixes
+def char_text(word):
+    return "^" + word.lower() + "$"
+
+# creates two "translators" of some sort. It turns text clues into numbers that the models can read.
+# char_vec = chops each ^word$ string into every 1-4 letter chunk and counts them
+# dict_vec = turns the features dictionary into numeric columns
+def make_vectorizers():
+    char_vec = CountVectorizer(analyzer="char", ngram_range=(1,4))
+    dict_vec = DictVectorizer()
+
+    return char_vec, dict_vec
+
+# loop through each word in a sentence and run char_text and the features on it. Feed those words into the translators and add them to a matrix.
+def build_matrix(sentence_token_lists, char_vec, dict_vec, fit=False):
+    words = []
+    dicts = []
+
+    for tokens in sentence_token_lists:
+        for i in range(len(tokens)):
+            words.append(char_text(tokens[i]))
+            dicts.append(token_features(tokens, i))
+
+    if fit:
+        char_part = char_vec.fit_transform(words)
+        dict_part = dict_vec.fit_transform(dicts)
+    else:
+        char_aprt = char_vec.transform(words)
+        dict_part = dict_vec.transform(dicts)
+
+    return sp.hstack([char_part, dict_part]).tocsr()
+
 
     
 
