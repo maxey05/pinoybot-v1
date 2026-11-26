@@ -70,5 +70,6 @@ if __name__ == "__main__":
     train, val, test = split_sentences(sentences)
     print(f"Train: {len(train)}, Validate: {len(val)}, Test: {len(test)}")
 
+    # create a baseline
     baseline(val)
     
