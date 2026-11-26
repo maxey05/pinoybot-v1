@@ -205,7 +205,7 @@ def build_matrix(sentence_token_lists, char_vec, dict_vec, fit=False):
         char_part = char_vec.fit_transform(words)
         dict_part = dict_vec.fit_transform(dicts)
     else:
-        char_aprt = char_vec.transform(words)
+        char_part = char_vec.transform(words)
         dict_part = dict_vec.transform(dicts)
 
     return sp.hstack([char_part, dict_part]).tocsr()
